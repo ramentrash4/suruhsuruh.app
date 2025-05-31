@@ -1,0 +1,175 @@
+/* Import Font (Contoh: Poppins dari Google Fonts) */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
+body {
+    font-family: 'Poppins', sans-serif; /* Menggunakan font Poppins */
+    margin: 0;
+    overflow: hidden; /* Mencegah scroll */
+    height: 100vh;
+    width: 100vw;
+}
+
+.login-page-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex; /* Untuk memusatkan login-content-container */
+    justify-content: center;
+    align-items: center;
+}
+
+.background-collage-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1; /* Latar belakang ada di lapisan 1 */
+}
+
+.background-collage {
+    width: 100%;
+    height: 100%;
+    background-image: url('../img/background_kolase.png'); /* Sesuaikan path jika perlu */
+    background-size: cover;
+    background-position: center;
+    transition: filter 0.8s cubic-bezier(0.25, 0.1, 0.25, 1) 0.2s; /* Transisi lebih halus, sedikit delay */
+    filter: blur(0px) brightness(1); /* Kondisi awal */
+}
+
+.background-collage.darken {
+    filter: blur(5px) brightness(0.5); /* Lebih gelap dan blur */
+}
+
+.background-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(10, 25, 50, 0); /* Biru gelap transparan awal */
+    opacity: 0;
+    transition: background-color 0.8s cubic-bezier(0.25, 0.1, 0.25, 1) 0.2s, opacity 0.8s cubic-bezier(0.25, 0.1, 0.25, 1) 0.2s;
+}
+
+.background-overlay.show {
+    background-color: rgba(10, 25, 50, 0.6); /* Biru gelap semi-transparan saat aktif */
+    opacity: 1;
+}
+
+.login-content-container {
+    position: relative;
+    z-index: 2; /* Konten login di atas overlay dan background */
+    opacity: 0;
+    transform: translateY(40px) scale(0.95); /* Mulai dari bawah dan sedikit kecil */
+    transition: opacity 0.6s cubic-bezier(0.25, 0.1, 0.25, 1) 0.3s, transform 0.6s cubic-bezier(0.25, 0.1, 0.25, 1) 0.3s;
+    /* Tidak lagi pakai @keyframes, tapi transisi yang dipicu JS */
+}
+
+.login-content-container.show {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.logo-area {
+    /* styling tambahan untuk area logo jika perlu */
+}
+
+.login-logo-main {
+    width: 200px; /* Ukuran logo diperbesar */
+    height: auto;
+    margin-bottom: -10px; /* Agar sedikit overlap dengan card */
+    position: relative;
+    z-index: 6; /* Logo di atas card */
+}
+
+.login-form-card {
+    border: none; /* Hilangkan border default card Bootstrap */
+    border-radius: 1rem; /* Sudut lebih membulat */
+    background-color: rgba(255, 255, 255, 0.97); /* Latar belakang card sedikit transparan */
+    width: 400px; /* Lebar card */
+    max-width: 95%;
+}
+
+.login-form-card .card-body {
+    padding: 2.5rem; /* Padding lebih besar */
+}
+
+.card-title {
+    color: #0d6efd; /* Warna biru Bootstrap Primary */
+    font-weight: 700 !important; /* Pastikan bold */
+}
+
+/* Styling untuk form-floating dari Bootstrap */
+.form-floating > .form-control {
+    height: calc(3.5rem + 2px);
+    padding: 1rem 0.75rem;
+}
+
+.form-floating > label {
+    padding: 1rem 0.75rem;
+    color: #6c757d; /* Warna placeholder/label */
+}
+
+.form-floating > .form-control:focus ~ label,
+.form-floating > .form-control:not(:placeholder-shown) ~ label {
+    opacity: .65;
+    transform: scale(.85) translateY(-.5rem) translateX(.15rem);
+    color: #0d6efd; /* Warna label saat aktif/diisi */
+}
+
+.btn-login-custom {
+    padding: 0.8rem 1.5rem;
+    font-size: 1.1rem;
+    border-radius: 0.5rem;
+    background-image: linear-gradient(45deg, #0d6efd, #0a58ca); /* Gradien untuk tombol */
+    border: none;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+}
+
+.btn-login-custom:hover {
+    background-image: linear-gradient(45deg, #0a58ca, #0d6efd);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 123, 255, 0.4);
+}
+
+.login-error-message {
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+}
+.login-error-message i {
+    margin-right: 0.5rem;
+}
+
+.login-footer {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    z-index: 3; /* Di atas background, di bawah konten jika kontennya panjang */
+}
+
+.login-footer small a {
+    color: #adb5bd;
+    text-decoration: none;
+}
+.login-footer small a:hover {
+    color: #ffffff;
+    text-decoration: underline;
+}
+
+/* Untuk layar kecil, buat form lebih ramping */
+@media (max-width: 576px) {
+    .login-form-card {
+        width: 90%;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    .login-form-card .card-body {
+        padding: 1.5rem;
+    }
+    .login-logo-main {
+        width: 150px;
+    }
+}
