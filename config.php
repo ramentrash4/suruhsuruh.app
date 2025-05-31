@@ -4,18 +4,23 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Menentukan BASE_URL secara dinamis
-$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
-$host = $_SERVER['HTTP_HOST'];
-$base_path = dirname($_SERVER['SCRIPT_NAME']);
-
-// Jika kita berada di dalam subdirektori seperti /tabel/pengguna, kita perlu naik ke root
-// Cari posisi '/tabel', '/auth', dll. dan potong path-nya.
-// Cara yang lebih sederhana untuk proyek ini adalah mendefinisikannya secara manual jika dinamis terlalu rumit.
-
-// CARA SEDERHANA DAN ANDAL UNTUK PROYEK LOKAL:
-define('BASE_URL', '/projekbasdat/'); // Sesuaikan 'projekbasdat' dengan nama folder proyek Anda di htdocs
+// Definisikan BASE_URL (sesuaikan '/projekbasdat/' jika nama folder Anda berbeda)
+if (!defined('BASE_URL')) {
+    // Cara sederhana dan andal untuk proyek lokal:
+    define('BASE_URL', '/projekbasdat/'); 
+}
 
 // Sertakan koneksi database juga di sini agar terpusat
-require_once __DIR__ . '/config/database.php';
+// Pastikan path ke database.php ini benar relatif terhadap config.php
+require_once __DIR__ . '/config/database.php'; 
+
+// Sertakan kredensial admin 
+// Ganti path ini jika Anda meletakkan admin_credentials.php di tempat lain
+if (file_exists(__DIR__ . '/config/admin_credentials.php')) { 
+    require_once __DIR__ . '/config/admin_credentials.php';
+}
+// Contoh jika ada di root projekbasdat (satu level di atas folder config ini):
+// elseif (file_exists(dirname(__DIR__) . '/admin_credentials.php')) {
+//     require_once dirname(__DIR__) . '/admin_credentials.php';
+// }
 ?>

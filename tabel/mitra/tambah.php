@@ -1,185 +1,128 @@
 <?php
+// Pastikan error reporting aktif di paling atas
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
 session_start();
-require '../../config/database.php';
-
-// Fetch perusahaan list for dropdown
-$perusahaan_list_query = mysqli_query($koneksi, "SELECT * FROM perusahaan ORDER BY Id_Perusahaan ASC");
-if (!$perusahaan_list_query) {
-    die("Error fetching perusahaan list: " . mysqli_error($koneksi));
+if (!isset($_SESSION['login_admin']) || $_SESSION['login_admin'] !== true) {
+    if (!defined('BASE_URL')) define('BASE_URL', '/projekbasdat/');
+    header("Location: " . BASE_URL . "auth/login.php");
+    exit;
 }
-
-// Fetch layanan list for checkboxes (for table 'terikat')
-$layanan_list_all_query = mysqli_query($koneksi, "SELECT * FROM layanan ORDER BY Nama_Layanan ASC");
-if (!$layanan_list_all_query) {
-    die("Error fetching layanan list: " . mysqli_error($koneksi));
-}
-
-
+require_once '../../config.php';
 $error_message = '';
 
+$perusahaan_list = $koneksi->query("SELECT Id_Perusahaan, Nama, CEO, Kota FROM perusahaan ORDER BY Nama ASC");
+$layanan_list_all = $koneksi->query("SELECT Id_Layanan, Nama_Layanan, Jenis_Layanan FROM layanan WHERE Status_Aktif = 1 ORDER BY Nama_Layanan ASC");
+
+if (!$perusahaan_list || !$layanan_list_all) { die("Error fetching lists: " . $koneksi->error); }
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $nama_mitra = mysqli_real_escape_string($koneksi, $_POST['nama_mitra']);
-    $no_telp = mysqli_real_escape_string($koneksi, $_POST['no_telp']);
-    $spesialis_mitra = mysqli_real_escape_string($koneksi, $_POST['spesialis_mitra']);
-    $id_perusahaan = isset($_POST['id_perusahaan']) && !empty($_POST['id_perusahaan']) ? intval($_POST['id_perusahaan']) : null;
-    $layanan_terpilih = isset($_POST['id_layanan']) ? $_POST['id_layanan'] : []; // Array of selected layanan IDs
+    $nama_mitra = trim($_POST['nama_mitra']);
+    $no_telp = trim($_POST['no_telp']);
+    $spesialis_mitra = trim($_POST['spesialis_mitra']);
+    $id_perusahaan = isset($_POST['id_perusahaan']) && !empty($_POST['id_perusahaan']) ? (int)$_POST['id_perusahaan'] : null;
+    $layanan_terpilih = isset($_POST['id_layanan']) && is_array($_POST['id_layanan']) ? $_POST['id_layanan'] : [];
 
     if (empty($nama_mitra) || empty($no_telp) || empty($spesialis_mitra)) {
         $error_message = "Nama Mitra, No. Telepon, dan Spesialis Mitra wajib diisi.";
     } else {
-        $id_perusahaan_sql = $id_perusahaan ? "'$id_perusahaan'" : "NULL";
-
-        // Start transaction
-        mysqli_begin_transaction($koneksi);
-
+        $koneksi->begin_transaction();
         try {
-            $query_mitra = "INSERT INTO mitra (Nama_Mitra, No_Telp, Spesialis_Mitra, Id_Perusahaan) 
-                            VALUES ('$nama_mitra', '$no_telp', '$spesialis_mitra', $id_perusahaan_sql)";
+            $sql_mitra = "INSERT INTO mitra (Nama_Mitra, No_Telp, Spesialis_Mitra, Id_Perusahaan) VALUES (?, ?, ?, ?)";
+            $stmt_mitra = $koneksi->prepare($sql_mitra);
+            if ($stmt_mitra === false) throw new Exception("Prepare mitra gagal: " . $koneksi->error);
+            $stmt_mitra->bind_param("sssi", $nama_mitra, $no_telp, $spesialis_mitra, $id_perusahaan);
+            if (!$stmt_mitra->execute()) throw new Exception("Eksekusi mitra gagal: " . $stmt_mitra->error);
             
-            if (!mysqli_query($koneksi, $query_mitra)) {
-                throw new Exception("Gagal menambahkan data mitra: " . mysqli_error($koneksi));
-            }
-            
-            $new_mitra_id = mysqli_insert_id($koneksi);
+            $new_mitra_id = $koneksi->insert_id;
+            $stmt_mitra->close();
 
-            // Insert into 'terikat' table
             if (!empty($layanan_terpilih) && $new_mitra_id > 0) {
+                $sql_terikat = "INSERT INTO terikat (Id_Mitra, Id_Layanan) VALUES (?, ?)";
+                $stmt_terikat = $koneksi->prepare($sql_terikat);
+                if ($stmt_terikat === false) throw new Exception("Prepare terikat gagal: " . $koneksi->error);
+                
                 foreach ($layanan_terpilih as $id_layanan_single) {
-                    $id_layanan_single = intval($id_layanan_single);
-                    $query_terikat = "INSERT INTO terikat (Id_Mitra, Id_Layanan) VALUES ('$new_mitra_id', '$id_layanan_single')";
-                    if (!mysqli_query($koneksi, $query_terikat)) {
-                        // Jika ada duplikasi Id_Mitra dan Id_Layanan, ini akan error jika PK sudah ada
-                        // Anda mungkin ingin menggunakan INSERT IGNORE atau ON DUPLICATE KEY UPDATE jika perlu
-                        // Untuk sekarang, kita asumsikan kombinasi baru
-                        throw new Exception("Gagal menambahkan data ke tabel terikat: " . mysqli_error($koneksi));
-                    }
+                    $id_layanan_int = (int)$id_layanan_single;
+                    $stmt_terikat->bind_param("ii", $new_mitra_id, $id_layanan_int);
+                    if (!$stmt_terikat->execute()) throw new Exception("Eksekusi terikat gagal: " . $stmt_terikat->error);
                 }
+                $stmt_terikat->close();
             }
-
-            mysqli_commit($koneksi);
-            $_SESSION['success_message'] = "Data mitra dan layanan terkait berhasil ditambahkan!";
+            $koneksi->commit();
+            $_SESSION['success_message'] = "Mitra baru dan layanan terkait berhasil ditambahkan!";
             header("Location: index.php");
             exit;
-
         } catch (Exception $e) {
-            mysqli_rollback($koneksi);
+            $koneksi->rollback();
             $error_message = $e->getMessage();
         }
     }
 }
+$page_title = "Tambah Data Mitra";
+require_once '../../templates/header.php';
 ?>
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <title>Tambah Data Mitra</title>
-    <link rel="stylesheet" href="../../assets/style.css"> <style>
-        .detail-display { 
-            margin-top:10px; 
-            border:1px solid #ccc; 
-            padding:15px; 
-            min-height: 50px; 
-            background-color: #f9f9f9; 
-            border-radius: 4px;
-            line-height: 1.6;
-        }
-        .detail-display.empty { display: none; }
-        .detail-display strong { color: #333; min-width: 120px; display: inline-block; }
-        .text-muted { color: #777; }
-        .checkbox-group label { display: block; margin-bottom: 5px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h2>➕ Tambah Data Mitra Baru</h2>
-
-        <?php if (!empty($error_message)): ?>
-            <div class="alert alert-danger"><?= $error_message ?></div>
-        <?php endif; ?>
-
-        <form method="post">
-            <div class="form-group">
-                <label>Nama Mitra:</label>
-                <input type="text" name="nama_mitra" value="<?= isset($_POST['nama_mitra']) ? htmlspecialchars($_POST['nama_mitra']) : '' ?>" required>
-            </div>
-            <div class="form-group">
-                <label>No. Telepon:</label>
-                <input type="text" name="no_telp" value="<?= isset($_POST['no_telp']) ? htmlspecialchars($_POST['no_telp']) : '' ?>" required>
-            </div>
-            <div class="form-group">
-                <label>Spesialis Mitra:</label>
-                <input type="text" name="spesialis_mitra" value="<?= isset($_POST['spesialis_mitra']) ? htmlspecialchars($_POST['spesialis_mitra']) : '' ?>" required>
-            </div>
-
-            <div class="form-group">
-                <label>Perusahaan Afiliasi (Opsional):</label>
-                <select name="id_perusahaan" id="id_perusahaan_select" onchange="tampilkanDetailPerusahaan()">
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h2 fw-bold text-primary"><i class="bi bi-person-plus-fill me-3"></i><?= $page_title; ?></h1>
+    <a href="index.php" class="btn btn-outline-secondary rounded-pill px-4"><i class="bi bi-arrow-left-circle-fill me-2"></i>Kembali</a>
+</div>
+<div class="card shadow-sm border-light-subtle">
+    <div class="card-body p-4 p-md-5">
+        <?php if (!empty($error_message)): ?><div class="alert alert-danger alert-dismissible fade show"><?= htmlspecialchars($error_message); ?><button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div><?php endif; ?>
+        <form method="post" class="row g-3 needs-validation" id="formTambahMitra" novalidate>
+            <div class="col-md-6"><label for="nama_mitra" class="form-label fw-semibold"><i class="bi bi-person-badge me-2"></i>Nama Mitra</label><input type="text" name="nama_mitra" id="nama_mitra" class="form-control" required value="<?= isset($_POST['nama_mitra']) ? htmlspecialchars($_POST['nama_mitra']) : '' ?>"><div class="invalid-feedback">Wajib diisi.</div></div>
+            <div class="col-md-6"><label for="no_telp" class="form-label fw-semibold"><i class="bi bi-telephone-fill me-2"></i>No. Telepon</label><input type="text" name="no_telp" id="no_telp" class="form-control" required value="<?= isset($_POST['no_telp']) ? htmlspecialchars($_POST['no_telp']) : '' ?>"><div class="invalid-feedback">Wajib diisi.</div></div>
+            <div class="col-12"><label for="spesialis_mitra" class="form-label fw-semibold"><i class="bi bi-star-fill me-2"></i>Spesialis Mitra</label><input type="text" name="spesialis_mitra" id="spesialis_mitra" class="form-control" required value="<?= isset($_POST['spesialis_mitra']) ? htmlspecialchars($_POST['spesialis_mitra']) : '' ?>"><div class="invalid-feedback">Wajib diisi.</div></div>
+            
+            <div class="col-md-7">
+                <label for="id_perusahaan_select" class="form-label fw-semibold"><i class="bi bi-building me-2"></i>Perusahaan Afiliasi (Opsional)</label>
+                <select name="id_perusahaan" id="id_perusahaan_select" class="form-select select2-init" data-preview-target="#detail_perusahaan_panel">
                     <option value="">-- Pilih Perusahaan --</option>
-                    <?php mysqli_data_seek($perusahaan_list_query, 0); ?>
-                    <?php while ($prs = mysqli_fetch_assoc($perusahaan_list_query)) : ?>
-                    <option 
-                        value="<?= $prs['Id_Perusahaan'] ?>" 
-                        data-id_perusahaan="<?= htmlspecialchars($prs['Id_Perusahaan']) ?>"
-                        data-nama_perusahaan="<?= htmlspecialchars($prs['Nama']) ?>"
-                        data-ceo_perusahaan="<?= htmlspecialchars($prs['CEO']) ?>"
-                        data-kota_perusahaan="<?= htmlspecialchars($prs['Kota']) ?>"
-                        data-jalan_perusahaan="<?= htmlspecialchars($prs['Jalan']) ?>"
-                        data-kodepos_perusahaan="<?= htmlspecialchars($prs['Kode_Pos']) ?>"
-                        <?= (isset($_POST['id_perusahaan']) && $_POST['id_perusahaan'] == $prs['Id_Perusahaan']) ? 'selected' : '' ?>>
-                        ID: <?= $prs['Id_Perusahaan'] ?> - <?= htmlspecialchars($prs['Nama']) ?>
-                    </option>
-                    <?php endwhile; ?>
+                    <?php if($perusahaan_list) mysqli_data_seek($perusahaan_list,0); while ($p = $perusahaan_list->fetch_assoc()) : ?><option value="<?= $p['Id_Perusahaan'] ?>" data-nama_perusahaan="<?= htmlspecialchars($p['Nama']) ?>" data-ceo_perusahaan="<?= htmlspecialchars($p['CEO']) ?>" data-kota_perusahaan="<?= htmlspecialchars($p['Kota']) ?>" <?= (isset($_POST['id_perusahaan']) && $_POST['id_perusahaan'] == $p['Id_Perusahaan']) ? 'selected' : '' ?>><?= htmlspecialchars($p['Nama']) ?></option><?php endwhile; ?>
                 </select>
             </div>
-            <div id="detail_perusahaan_info" class="detail-display empty">
-                </div>
+            <div class="col-md-5">
+                <label class="form-label fw-semibold">Detail Perusahaan:</label>
+                <div id="detail_perusahaan_panel" class="detail-preview-panel mt-2 p-2 border rounded bg-light" style="font-size:0.85rem; min-height:70px;"><small class="text-muted">Pilih perusahaan untuk detail.</small></div>
+            </div>
 
-            <div class="form-group">
-                <label>Layanan yang Disediakan (Pilih satu atau lebih):</label>
-                <div class="checkbox-group">
-                    <?php mysqli_data_seek($layanan_list_all_query, 0); ?>
-                    <?php while ($lyn = mysqli_fetch_assoc($layanan_list_all_query)) : ?>
-                        <label>
-                            <input type="checkbox" name="id_layanan[]" value="<?= $lyn['Id_Layanan'] ?>"
-                                <?= (isset($_POST['id_layanan']) && is_array($_POST['id_layanan']) && in_array($lyn['Id_Layanan'], $_POST['id_layanan'])) ? 'checked' : '' ?>>
-                            <?= htmlspecialchars($lyn['Nama_Layanan']) ?> (<?= htmlspecialchars($lyn['Jenis_Layanan']) ?>)
-                        </label>
+            <div class="col-12 mt-4">
+                <label class="form-label fw-semibold"><i class="bi bi-card-checklist me-2"></i>Layanan yang Disediakan (Pilih satu atau lebih):</label>
+                <div class="row ps-2" style="max-height: 200px; overflow-y: auto;">
+                    <?php if($layanan_list_all) mysqli_data_seek($layanan_list_all,0); while ($l = $layanan_list_all->fetch_assoc()) : ?>
+                    <div class="col-md-4">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="id_layanan[]" value="<?= $l['Id_Layanan'] ?>" id="layanan_<?= $l['Id_Layanan'] ?>" <?= (isset($_POST['id_layanan']) && is_array($_POST['id_layanan']) && in_array($l['Id_Layanan'], $_POST['id_layanan'])) ? 'checked' : '' ?>>
+                            <label class="form-check-label" for="layanan_<?= $l['Id_Layanan'] ?>"><?= htmlspecialchars($l['Nama_Layanan']) ?> <small class="text-muted">(<?= htmlspecialchars($l['Jenis_Layanan']) ?>)</small></label>
+                        </div>
+                    </div>
                     <?php endwhile; ?>
                 </div>
             </div>
-            <br>
-            <button type="submit" class="btn btn-primary">Simpan Data Mitra</button>
-            <a href="index.php" class="btn">Batal</a>
+
+            <div class="col-12 text-end mt-4 border-top pt-4">
+                <button type="submit" id="submitButton" class="btn btn-primary btn-lg rounded-pill px-5"><i class="bi bi-save-fill me-2"></i>Simpan Mitra</button>
+            </div>
         </form>
     </div>
-
+</div>
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" /><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" />
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script><script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
-function tampilkanDetailPerusahaan() {
-    const select = document.getElementById('id_perusahaan_select');
-    const detailDiv = document.getElementById('detail_perusahaan_info');
-    const selectedOption = select.options[select.selectedIndex];
-
-    if (selectedOption && selectedOption.value) {
-        let html = '<h4>Detail Perusahaan Terpilih:</h4>';
-        html += `<strong>ID Perusahaan:</strong> ${selectedOption.dataset.id_perusahaan || "<span class='text-muted'>-</span>"}<br>`;
-        html += `<strong>Nama Perusahaan:</strong> ${selectedOption.dataset.nama_perusahaan || "<span class='text-muted'>-</span>"}<br>`;
-        html += `<strong>CEO:</strong> ${selectedOption.dataset.ceo_perusahaan || "<span class='text-muted'>-</span>"}<br>`;
-        html += `<strong>Kota:</strong> ${selectedOption.dataset.kota_perusahaan || "<span class='text-muted'>-</span>"}<br>`;
-        html += `<strong>Jalan:</strong> ${selectedOption.dataset.jalan_perusahaan || "<span class='text-muted'>-</span>"}<br>`;
-        html += `<strong>Kode Pos:</strong> ${selectedOption.dataset.kodepos_perusahaan || "<span class='text-muted'>-</span>"}<br>`;
-        
-        detailDiv.innerHTML = html;
-        detailDiv.classList.remove('empty');
-    } else {
-        detailDiv.innerHTML = '';
-        detailDiv.classList.add('empty');
-    }
-}
-document.addEventListener('DOMContentLoaded', function() {
-    if (document.getElementById('id_perusahaan_select').value) {
-        tampilkanDetailPerusahaan();
-    }
+$(document).ready(function() {
+    $('#id_perusahaan_select').select2({ theme: 'bootstrap-5', placeholder: "-- Pilih Perusahaan --", allowClear: true })
+    .on('select2:select select2:unselect', function (e) {
+        var selectedOption = e.params.data ? e.params.data.element : null;
+        var previewPanel = $($(this).data('preview-target'));
+        if (selectedOption && $(selectedOption).val() !== "") {
+            previewPanel.html('<strong>Nama:</strong> ' + ($(selectedOption).data('nama_perusahaan')||'N/A') + '<br>' + '<strong>CEO:</strong> ' + ($(selectedOption).data('ceo_perusahaan')||'N/A') + '<br>' + '<strong>Kota:</strong> ' + ($(selectedOption).data('kota_perusahaan')||'N/A'));
+        } else { previewPanel.html('<small class="text-muted">Detail perusahaan akan muncul.</small>'); }
+    });
+    $('#formTambahMitra').on('submit', function() { $('#submitButton').prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Menyimpan...'); });
 });
+// Script validasi Bootstrap standar
+(function () { 'use strict'; var forms = document.querySelectorAll('.needs-validation'); Array.prototype.slice.call(forms).forEach(function (form) { form.addEventListener('submit', function (event) { if (!form.checkValidity()) { event.preventDefault(); event.stopPropagation(); } form.classList.add('was-validated'); }, false); }); })();
 </script>
-</body>
-</html>
+<?php require_once '../../templates/footer.php'; ?>

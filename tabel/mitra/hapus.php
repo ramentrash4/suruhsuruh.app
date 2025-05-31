@@ -1,8 +1,18 @@
 <?php
-session_start();
-require '../../config/database.php';
+// Pastikan error reporting aktif di paling atas
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
-$id_mitra = isset($_GET['id']) ? intval($_GET['id']) : 0;
+session_start();
+if (!isset($_SESSION['login_admin']) || $_SESSION['login_admin'] !== true) {
+    if (!defined('BASE_URL')) define('BASE_URL', '/projekbasdat/');
+    header("Location: " . BASE_URL . "auth/login.php");
+    exit;
+}
+require_once '../../config.php';
+
+$id_mitra = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
 if ($id_mitra <= 0) {
     $_SESSION['error_message'] = "ID Mitra tidak valid untuk penghapusan.";
@@ -10,33 +20,36 @@ if ($id_mitra <= 0) {
     exit;
 }
 
-mysqli_begin_transaction($koneksi);
-
+$koneksi->begin_transaction();
 try {
-    // 1. Hapus referensi dari tabel 'terikat' terlebih dahulu
-    $query_delete_terikat = "DELETE FROM terikat WHERE Id_Mitra = $id_mitra";
-    if (!mysqli_query($koneksi, $query_delete_terikat)) {
-        throw new Exception("Gagal menghapus relasi layanan terkait: " . mysqli_error($koneksi));
-    }
+    // Hapus dari tabel 'terikat' terlebih dahulu
+    $sql_delete_terikat = "DELETE FROM terikat WHERE Id_Mitra = ?";
+    $stmt_terikat = $koneksi->prepare($sql_delete_terikat);
+    if($stmt_terikat === false) throw new Exception("Prepare delete terikat gagal: ".$koneksi->error);
+    $stmt_terikat->bind_param("i", $id_mitra);
+    if(!$stmt_terikat->execute()) throw new Exception("Eksekusi delete terikat gagal: ".$stmt_terikat->error);
+    $stmt_terikat->close();
 
-    // 2. Hapus data mitra
-    $query_delete_mitra = "DELETE FROM mitra WHERE Id_Mitra = $id_mitra";
-    if (mysqli_query($koneksi, $query_delete_mitra)) {
-        if (mysqli_affected_rows($koneksi) > 0) {
-            mysqli_commit($koneksi);
+    // Hapus dari tabel 'mitra'
+    $sql_delete_mitra = "DELETE FROM mitra WHERE Id_Mitra = ?";
+    $stmt_mitra = $koneksi->prepare($sql_delete_mitra);
+    if($stmt_mitra === false) throw new Exception("Prepare delete mitra gagal: ".$koneksi->error);
+    $stmt_mitra->bind_param("i", $id_mitra);
+    
+    if ($stmt_mitra->execute()) {
+        if ($stmt_mitra->affected_rows > 0) {
             $_SESSION['success_message'] = "Data mitra dan relasi layanan terkait berhasil dihapus.";
         } else {
-            // Mungkin sudah dihapus atau ID tidak ada, tapi relasi terikat mungkin sudah terhapus.
-            // Anggap berhasil jika tidak ada error. Jika ingin lebih ketat, bisa throw exception.
-            mysqli_commit($koneksi);
-            $_SESSION['error_message'] = "Data mitra tidak ditemukan (mungkin sudah dihapus), relasi layanan terkait telah diperiksa/dihapus.";
+            $_SESSION['error_message'] = "Data mitra tidak ditemukan atau sudah dihapus (relasi layanan terkait telah diperiksa/dihapus).";
         }
     } else {
-        throw new Exception("Gagal menghapus data mitra: " . mysqli_error($koneksi));
+        throw new Exception("Gagal menghapus data mitra: " . $stmt_mitra->error);
     }
+    $stmt_mitra->close();
+    $koneksi->commit();
 
 } catch (Exception $e) {
-    mysqli_rollback($koneksi);
+    $koneksi->rollback();
     $_SESSION['error_message'] = $e->getMessage();
 }
 

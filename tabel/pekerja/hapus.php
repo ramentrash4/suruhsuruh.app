@@ -1,10 +1,19 @@
 <?php
-session_start();
-require '../../config/database.php';
+// Pastikan error reporting aktif di paling atas
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
-// Mengambil ID dari URL (Composite Key)
-$id_pekerja = isset($_GET['id_pekerja']) ? intval($_GET['id_pekerja']) : 0;
-$id_perusahaan = isset($_GET['id_perusahaan']) ? intval($_GET['id_perusahaan']) : 0;
+session_start();
+if (!isset($_SESSION['login_admin']) || $_SESSION['login_admin'] !== true) {
+    if (!defined('BASE_URL')) define('BASE_URL', '/projekbasdat/');
+    header("Location: " . BASE_URL . "auth/login.php");
+    exit;
+}
+require_once '../../config.php';
+
+$id_pekerja = isset($_GET['id_pekerja']) ? (int)$_GET['id_pekerja'] : 0;
+$id_perusahaan = isset($_GET['id_perusahaan']) ? (int)$_GET['id_perusahaan'] : 0;
 
 if ($id_pekerja <= 0 || $id_perusahaan <= 0) {
     $_SESSION['error_message'] = "ID Pekerja atau ID Perusahaan tidak valid untuk penghapusan.";
@@ -12,20 +21,28 @@ if ($id_pekerja <= 0 || $id_perusahaan <= 0) {
     exit;
 }
 
-// Tidak ada tabel lain yang merujuk ke 'pekerja' berdasarkan skema, jadi bisa langsung hapus.
-// Jika ada, tambahkan pemeriksaan FK di sini.
+// Tabel 'pekerja' tidak menjadi FK di tabel lain dalam skema Anda, jadi bisa langsung hapus
+// Namun, pastikan tidak ada logika bisnis lain yang bergantung padanya.
 
-$query_delete = "DELETE FROM pekerja WHERE Id_Pekerja = $id_pekerja AND Id_Perusahaan = $id_perusahaan";
+$sql = "DELETE FROM pekerja WHERE Id_Pekerja = ? AND Id_Perusahaan = ?";
+$stmt = $koneksi->prepare($sql);
+if($stmt === false) { 
+    $_SESSION['error_message'] = "Gagal mempersiapkan query hapus: " . $koneksi->error;
+    header("Location: index.php");
+    exit;
+}
+$stmt->bind_param("ii", $id_pekerja, $id_perusahaan);
 
-if (mysqli_query($koneksi, $query_delete)) {
-    if (mysqli_affected_rows($koneksi) > 0) {
-        $_SESSION['success_message'] = "Data pekerja berhasil dihapus.";
+if ($stmt->execute()) {
+    if ($stmt->affected_rows > 0) {
+        $_SESSION['success_message'] = "Data pekerja (ID: ".$id_pekerja.", Prsh ID: ".$id_perusahaan.") berhasil dihapus.";
     } else {
         $_SESSION['error_message'] = "Data pekerja tidak ditemukan atau sudah dihapus.";
     }
 } else {
-    $_SESSION['error_message'] = "Gagal menghapus data pekerja: " . mysqli_error($koneksi);
+    $_SESSION['error_message'] = "Gagal menghapus data pekerja: " . $stmt->error;
 }
+$stmt->close();
 
 header("Location: index.php");
 exit;

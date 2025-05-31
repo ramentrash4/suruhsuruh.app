@@ -1,170 +1,100 @@
 <?php
+// Pastikan error reporting aktif di paling atas
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
 session_start();
-require '../../config/database.php';
-
-// Fetch profit list for dropdown, ordered by Id_Profit ASC
-// Include related detail_pesanan data for detailed display
-$profit_list_query = mysqli_query($koneksi, "
-    SELECT 
-        p.Id_Profit, p.Tanggal_Profit, p.total_Profit,
-        p.Id_DetailPesanan AS Profit_Id_DetailPesanan,
-        dp.Id_Pesanan AS DetailPesanan_Id_Pesanan,
-        dp.Harga AS DetailPesanan_Harga,
-        dp.Jumlah AS DetailPesanan_Jumlah
-    FROM profit p
-    LEFT JOIN detail_pesanan dp ON p.Id_DetailPesanan = dp.Id_DetailPesanan
-    ORDER BY p.Id_Profit ASC
-");
-
-if (!$profit_list_query) {
-    die("Error fetching profit list: " . mysqli_error($koneksi));
+if (!isset($_SESSION['login_admin']) || $_SESSION['login_admin'] !== true) {
+    if (!defined('BASE_URL')) define('BASE_URL', '/projekbasdat/');
+    header("Location: " . BASE_URL . "auth/login.php");
+    exit;
 }
-
+require_once '../../config.php';
 $error_message = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $id_profit = isset($_POST['id_profit']) && !empty($_POST['id_profit']) ? intval($_POST['id_profit']) : null;
-    $nama = mysqli_real_escape_string($koneksi, $_POST['nama']);
-    $ceo = mysqli_real_escape_string($koneksi, $_POST['ceo']);
-    $kota = mysqli_real_escape_string($koneksi, $_POST['kota']);
-    $jalan = mysqli_real_escape_string($koneksi, $_POST['jalan']);
-    $kode_pos = mysqli_real_escape_string($koneksi, $_POST['kode_pos']);
+    $nama = trim($_POST['nama']);
+    $ceo = trim($_POST['ceo']);
+    $kota = trim($_POST['kota']);
+    $jalan = trim($_POST['jalan']);
+    $kode_pos = trim($_POST['kode_pos']);
 
     if (empty($nama) || empty($ceo) || empty($kota) || empty($jalan) || empty($kode_pos)) {
-        $error_message = "Semua field (Nama, CEO, Kota, Jalan, Kode Pos) wajib diisi.";
+        $error_message = "Semua field wajib diisi.";
     } else {
-        $id_profit_sql = $id_profit ? "'$id_profit'" : "NULL";
-
-        $query = "INSERT INTO perusahaan (Id_Profit, Nama, CEO, Kota, Jalan, Kode_Pos) 
-                  VALUES ($id_profit_sql, '$nama', '$ceo', '$kota', '$jalan', '$kode_pos')";
-        
-        if (mysqli_query($koneksi, $query)) {
-            $_SESSION['success_message'] = "Data perusahaan berhasil ditambahkan!";
-            header("Location: index.php");
-            exit;
-        } else {
-            $error_message = "Gagal menambahkan data perusahaan: " . mysqli_error($koneksi);
-        }
+        // Cek apakah sudah ada data perusahaan (opsional, jika hanya boleh 1 perusahaan)
+        // $check_stmt = $koneksi->prepare("SELECT Id_Perusahaan FROM perusahaan LIMIT 1");
+        // $check_stmt->execute();
+        // $check_result = $check_stmt->get_result();
+        // if ($check_result->num_rows > 0 && JIKA_HANYA_SATU_PERUSAHAAN) {
+        //     $error_message = "Data perusahaan utama sudah ada. Anda hanya bisa mengeditnya.";
+        // } else {
+            $sql = "INSERT INTO perusahaan (Nama, CEO, Kota, Jalan, Kode_Pos) VALUES (?, ?, ?, ?, ?)";
+            $stmt = $koneksi->prepare($sql);
+            if ($stmt === false) { $error_message = "Error preparing statement: " . $koneksi->error; }
+            else {
+                $stmt->bind_param("sssss", $nama, $ceo, $kota, $jalan, $kode_pos);
+                if($stmt->execute()) {
+                    $_SESSION['success_message'] = "Data perusahaan baru berhasil ditambahkan!";
+                    header("Location: index.php");
+                    exit;
+                } else { $error_message = "Gagal menambahkan data perusahaan: " . $stmt->error; }
+                $stmt->close();
+            }
+        // }
+        // if(isset($check_stmt)) $check_stmt->close();
     }
 }
+$page_title = "Tambah Data Perusahaan";
+require_once '../../templates/header.php';
 ?>
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <title>Tambah Data Perusahaan</title>
-    <link rel="stylesheet" href="../../assets/style.css"> <style>
-        .detail-display { 
-            margin-top:10px; 
-            border:1px solid #ccc; 
-            padding:15px; 
-            min-height: 50px; 
-            background-color: #f9f9f9; 
-            border-radius: 4px;
-            line-height: 1.6;
-        }
-        .detail-display.empty { display: none; }
-        .detail-display strong { color: #333; min-width: 160px; display: inline-block; }
-        .text-muted { color: #777; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h2>➕ Tambah Data Perusahaan Baru</h2>
-
-        <?php if (!empty($error_message)): ?>
-            <div class="alert alert-danger"><?= $error_message ?></div>
-        <?php endif; ?>
-
-        <form method="post">
-            <div class="form-group">
-                <label>Nama Perusahaan:</label>
-                <input type="text" name="nama" value="<?= isset($_POST['nama']) ? htmlspecialchars($_POST['nama']) : '' ?>" required>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h2 fw-bold text-primary"><i class="bi bi-building-add me-3"></i><?= $page_title; ?></h1>
+    <a href="index.php" class="btn btn-outline-secondary rounded-pill px-4"><i class="bi bi-arrow-left-circle-fill me-2"></i>Kembali</a>
+</div>
+<div class="card shadow-sm border-light-subtle">
+    <div class="card-body p-4 p-md-5">
+        <?php if (!empty($error_message)): ?><div class="alert alert-danger alert-dismissible fade show"><?= htmlspecialchars($error_message); ?><button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div><?php endif; ?>
+        <form method="post" class="row g-3 needs-validation" id="formTambahPerusahaan" novalidate>
+            <div class="col-md-12">
+                <label for="nama" class="form-label fw-semibold"><i class="bi bi-building me-2"></i>Nama Perusahaan</label>
+                <input type="text" name="nama" id="nama" class="form-control" required value="<?= isset($_POST['nama']) ? htmlspecialchars($_POST['nama']) : '' ?>">
+                <div class="invalid-feedback">Nama perusahaan wajib diisi.</div>
             </div>
-            <div class="form-group">
-                <label>CEO:</label>
-                <input type="text" name="ceo" value="<?= isset($_POST['ceo']) ? htmlspecialchars($_POST['ceo']) : '' ?>" required>
+            <div class="col-md-6">
+                <label for="ceo" class="form-label fw-semibold"><i class="bi bi-person-badge me-2"></i>CEO</label>
+                <input type="text" name="ceo" id="ceo" class="form-control" required value="<?= isset($_POST['ceo']) ? htmlspecialchars($_POST['ceo']) : '' ?>">
+                <div class="invalid-feedback">Nama CEO wajib diisi.</div>
             </div>
-            <div class="form-group">
-                <label>Kota:</label>
-                <input type="text" name="kota" value="<?= isset($_POST['kota']) ? htmlspecialchars($_POST['kota']) : '' ?>" required>
+            <div class="col-md-6">
+                <label for="kota" class="form-label fw-semibold"><i class="bi bi-pin-map-fill me-2"></i>Kota</label>
+                <input type="text" name="kota" id="kota" class="form-control" required value="<?= isset($_POST['kota']) ? htmlspecialchars($_POST['kota']) : '' ?>">
+                <div class="invalid-feedback">Kota wajib diisi.</div>
             </div>
-            <div class="form-group">
-                <label>Jalan:</label>
-                <input type="text" name="jalan" value="<?= isset($_POST['jalan']) ? htmlspecialchars($_POST['jalan']) : '' ?>" required>
+            <div class="col-12">
+                <label for="jalan" class="form-label fw-semibold"><i class="bi bi-signpost-2-fill me-2"></i>Alamat Jalan</label>
+                <input type="text" name="jalan" id="jalan" class="form-control" required value="<?= isset($_POST['jalan']) ? htmlspecialchars($_POST['jalan']) : '' ?>">
+                <div class="invalid-feedback">Alamat jalan wajib diisi.</div>
             </div>
-            <div class="form-group">
-                <label>Kode Pos:</label>
-                <input type="text" name="kode_pos" value="<?= isset($_POST['kode_pos']) ? htmlspecialchars($_POST['kode_pos']) : '' ?>" required>
+            <div class="col-md-6">
+                <label for="kode_pos" class="form-label fw-semibold"><i class="bi bi-mailbox me-2"></i>Kode Pos</label>
+                <input type="text" name="kode_pos" id="kode_pos" class="form-control" required pattern="[0-9]{5}" value="<?= isset($_POST['kode_pos']) ? htmlspecialchars($_POST['kode_pos']) : '' ?>">
+                <div class="invalid-feedback">Kode pos wajib diisi dengan 5 digit angka.</div>
             </div>
-
-            <div class="form-group">
-                <label>Profit Terkait (Opsional):</label>
-                <select name="id_profit" id="id_profit_select" onchange="tampilkanDetailProfit()">
-                    <option value="">-- Pilih Profit (Jika Berkaitan) --</option>
-                    <?php mysqli_data_seek($profit_list_query, 0); ?>
-                    <?php while ($p = mysqli_fetch_assoc($profit_list_query)) : ?>
-                    <option 
-                        value="<?= $p['Id_Profit'] ?>" 
-                        data-id_profit="<?= htmlspecialchars($p['Id_Profit']) ?>"
-                        data-tanggal_profit="<?= !empty($p['Tanggal_Profit']) ? htmlspecialchars(date('d M Y', strtotime($p['Tanggal_Profit']))) : '' ?>"
-                        data-total_profit="<?= htmlspecialchars($p['total_Profit']) ?>"
-                        data-profit_id_detail_pesanan="<?= htmlspecialchars($p['Profit_Id_DetailPesanan']) ?>"
-                        data-detailpesanan_id_pesanan="<?= htmlspecialchars($p['DetailPesanan_Id_Pesanan']) ?>"
-                        data-detailpesanan_harga="<?= htmlspecialchars($p['DetailPesanan_Harga']) ?>"
-                        data-detailpesanan_jumlah="<?= htmlspecialchars($p['DetailPesanan_Jumlah']) ?>"
-                        <?= (isset($_POST['id_profit']) && $_POST['id_profit'] == $p['Id_Profit']) ? 'selected' : '' ?>>
-                        ID Profit: <?= $p['Id_Profit'] ?> (Total: <?= htmlspecialchars($p['total_Profit']) ?> <?= !empty($p['Tanggal_Profit']) ? '- Tgl: '.date('d M Y', strtotime($p['Tanggal_Profit'])) : '' ?>)
-                    </option>
-                    <?php endwhile; ?>
-                </select>
+            <div class="col-12 text-end mt-4 border-top pt-4">
+                <button type="submit" id="submitButton" class="btn btn-primary btn-lg rounded-pill px-5"><i class="bi bi-save-fill me-2"></i>Simpan Perusahaan</button>
             </div>
-            <div id="detail_profit_info" class="detail-display empty">
-                </div>
-            <br>
-            <button type="submit" class="btn btn-primary">Simpan Data Perusahaan</button>
-            <a href="index.php" class="btn">Batal</a>
         </form>
     </div>
-
+</div>
 <script>
-function tampilkanDetailProfit() {
-    const select = document.getElementById('id_profit_select');
-    const detailDiv = document.getElementById('detail_profit_info');
-    const selectedOption = select.options[select.selectedIndex];
-
-    if (selectedOption && selectedOption.value) {
-        let html = '<h4>Detail Profit Terpilih:</h4>';
-        html += `<strong>ID Profit:</strong> ${selectedOption.dataset.id_profit || "<span class='text-muted'>-</span>"}<br>`;
-        html += `<strong>Tanggal Profit:</strong> ${selectedOption.dataset.tanggal_profit || "<span class='text-muted'>-</span>"}<br>`;
-        html += `<strong>Total Profit:</strong> ${selectedOption.dataset.total_profit || "<span class='text-muted'>-</span>"}<br>`;
-        
-        if (selectedOption.dataset.profit_id_detail_pesanan) {
-            html += '<hr>';
-            html += '<strong>Terkait Detail Pesanan:</strong><br>';
-            html += `&nbsp;&nbsp;&nbsp;<strong>ID Detail Pesanan:</strong> ${selectedOption.dataset.profit_id_detail_pesanan}<br>`;
-            html += `&nbsp;&nbsp;&nbsp;<strong>ID Pesanan Induk:</strong> ${selectedOption.dataset.detailpesanan_id_pesanan || "<span class='text-muted'>-</span>"}<br>`;
-            let harga = parseFloat(selectedOption.dataset.detailpesanan_harga || 0);
-            let jumlah = parseInt(selectedOption.dataset.detailpesanan_jumlah || 0);
-            html += `&nbsp;&nbsp;&nbsp;<strong>Harga Item:</strong> Rp ${harga.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}<br>`;
-            html += `&nbsp;&nbsp;&nbsp;<strong>Jumlah Item:</strong> ${jumlah}<br>`;
-        } else {
-            html += '<hr>';
-            html += '<strong>Terkait Detail Pesanan:</strong> <span class="text-muted">Tidak ada</span><br>';
-        }
-        
-        detailDiv.innerHTML = html;
-        detailDiv.classList.remove('empty');
-    } else {
-        detailDiv.innerHTML = '';
-        detailDiv.classList.add('empty');
-    }
-}
-document.addEventListener('DOMContentLoaded', function() {
-    if (document.getElementById('id_profit_select').value) {
-        tampilkanDetailProfit();
-    }
+// Pencegahan double submit
+document.getElementById('formTambahPerusahaan')?.addEventListener('submit', function() {
+    document.getElementById('submitButton').setAttribute('disabled', 'true');
+    document.getElementById('submitButton').innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Menyimpan...';
 });
+// Script validasi Bootstrap standar
+(function () { 'use strict'; var forms = document.querySelectorAll('.needs-validation'); Array.prototype.slice.call(forms).forEach(function (form) { form.addEventListener('submit', function (event) { if (!form.checkValidity()) { event.preventDefault(); event.stopPropagation(); } form.classList.add('was-validated'); }, false); }); })();
 </script>
-</body>
-</html>
+<?php require_once '../../templates/footer.php'; ?>

@@ -1,6 +1,16 @@
 <?php
+// Pastikan error reporting aktif di paling atas
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
 session_start();
-require '../../config/database.php';
+if (!isset($_SESSION['login_admin']) || $_SESSION['login_admin'] !== true) {
+    if (!defined('BASE_URL')) define('BASE_URL', '/projekbasdat/');
+    header("Location: " . BASE_URL . "auth/login.php");
+    exit;
+}
+require_once '../../config.php';
 
 $id_layanan = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
@@ -10,63 +20,50 @@ if ($id_layanan <= 0) {
     exit;
 }
 
-mysqli_begin_transaction($koneksi);
-
+$koneksi->begin_transaction();
 try {
-    // 1. Hapus referensi dari tabel 'terikat'
-    // Ini akan terhapus otomatis jika ada ON DELETE CASCADE dari layanan ke terikat,
-    // namun untuk lebih eksplisit dan jika tidak ada CASCADE:
-    $query_delete_terikat = "DELETE FROM terikat WHERE Id_Layanan = $id_layanan";
-    if (!mysqli_query($koneksi, $query_delete_terikat)) {
-        // Tidak perlu throw error jika tidak ada, mungkin memang tidak terikat
-    }
-
-    // 2. Periksa FK di tabel 'pesanan' (pesanan_ibfk_3)
-    $check_pesanan_query = "SELECT COUNT(*) as count FROM pesanan WHERE Id_Layanan = $id_layanan";
-    $pesanan_result = mysqli_query($koneksi, $check_pesanan_query);
-    $pesanan_count = ($pesanan_result) ? mysqli_fetch_assoc($pesanan_result)['count'] : 0;
+    // 1. Periksa FK di tabel 'pesanan'
+    $stmt_check_pesanan = $koneksi->prepare("SELECT COUNT(*) as count FROM pesanan WHERE Id_Layanan = ?");
+    if(!$stmt_check_pesanan) throw new Exception("Prepare cek pesanan gagal: ".$koneksi->error);
+    $stmt_check_pesanan->bind_param("i", $id_layanan);
+    $stmt_check_pesanan->execute();
+    $pesanan_count = $stmt_check_pesanan->get_result()->fetch_assoc()['count'];
+    $stmt_check_pesanan->close();
 
     if ($pesanan_count > 0) {
-        throw new Exception("Tidak dapat menghapus layanan ini karena masih direferensikan oleh $pesanan_count data pesanan. Atur ulang referensi atau hapus data pesanan terkait terlebih dahulu.");
+        throw new Exception("Tidak dapat menghapus layanan ini karena masih direferensikan oleh ".$pesanan_count." data pesanan. Atur ulang referensi atau hapus data pesanan terkait terlebih dahulu.");
     }
 
-    // 3. Hapus data dari tabel spesialisasi (anak)
-    // Ini akan terhapus otomatis jika ON DELETE CASCADE dari layanan_anak ke layanan induk sudah benar.
-    // Jika tidak, lakukan secara manual:
-    // $jenis_layanan_query = mysqli_query($koneksi, "SELECT Jenis_Layanan FROM layanan WHERE Id_Layanan = $id_layanan");
-    // if ($jenis_layanan_query && mysqli_num_rows($jenis_layanan_query) > 0) {
-    //     $jenis = mysqli_fetch_assoc($jenis_layanan_query)['Jenis_Layanan'];
-    //     $table_spec_name = '';
-    //     if ($jenis == 'Makanan') $table_spec_name = 'layanan_makanan';
-    //     elseif ($jenis == 'Kesehatan') $table_spec_name = 'layanan_kesehatan';
-    //     elseif ($jenis == 'Layanan Rumah') $table_spec_name = 'layanan_pelayanan_rumah';
-        
-    //     if (!empty($table_spec_name)) {
-    //         $query_delete_spec = "DELETE FROM $table_spec_name WHERE Id_Layanan = $id_layanan";
-    //         if (!mysqli_query($koneksi, $query_delete_spec)) {
-    //             // Abaikan jika tidak ada, karena bisa jadi layanan 'Lainnya' atau sudah terhapus
-    //         }
-    //     }
-    // }
+    // 2. Hapus referensi dari tabel 'terikat'
+    $stmt_delete_terikat = $koneksi->prepare("DELETE FROM terikat WHERE Id_Layanan = ?");
+    if(!$stmt_delete_terikat) throw new Exception("Prepare delete terikat gagal: ".$koneksi->error);
+    $stmt_delete_terikat->bind_param("i", $id_layanan);
+    if(!$stmt_delete_terikat->execute()){ /* Tidak perlu error jika tidak ada, yang penting tidak gagal query */ }
+    $stmt_delete_terikat->close();
 
+    // 3. Hapus data dari tabel spesialisasi anak (SUDAH DIHILANGKAN SESUAI PERMINTAAN)
+    // Karena tabel layanan_makanan, layanan_kesehatan, layanan_pelayanan_rumah sudah tidak ada/tidak digunakan,
+    // kita tidak perlu menghapus dari sana. Constraint FK dari tabel anak ke layanan juga seharusnya sudah dihapus dari DB.
 
     // 4. Hapus data layanan utama
-    // Jika ON DELETE CASCADE di FK tabel anak sudah benar, langkah 3 tidak perlu eksplisit.
-    $query_delete_layanan = "DELETE FROM layanan WHERE Id_Layanan = $id_layanan";
-    if (mysqli_query($koneksi, $query_delete_layanan)) {
-        if (mysqli_affected_rows($koneksi) > 0) {
-            mysqli_commit($koneksi);
-            $_SESSION['success_message'] = "Data layanan utama dan semua data spesifik terkait (jika ON DELETE CASCADE aktif) serta relasi mitra berhasil dihapus.";
+    $stmt_delete_layanan = $koneksi->prepare("DELETE FROM layanan WHERE Id_Layanan = ?");
+    if(!$stmt_delete_layanan) throw new Exception("Prepare delete layanan gagal: ".$koneksi->error);
+    $stmt_delete_layanan->bind_param("i", $id_layanan);
+    
+    if ($stmt_delete_layanan->execute()) {
+        if ($stmt_delete_layanan->affected_rows > 0) {
+            $_SESSION['success_message'] = "Data layanan dan relasi mitra terkait berhasil dihapus.";
         } else {
-            mysqli_commit($koneksi); 
-            $_SESSION['error_message'] = "Data layanan utama tidak ditemukan (mungkin sudah dihapus). Relasi lain telah diperiksa.";
+            $_SESSION['error_message'] = "Data layanan tidak ditemukan atau sudah dihapus.";
         }
     } else {
-        throw new Exception("Gagal menghapus data layanan utama: " . mysqli_error($koneksi));
+        throw new Exception("Gagal menghapus data layanan utama: " . $stmt_delete_layanan->error);
     }
+    $stmt_delete_layanan->close();
+    $koneksi->commit();
 
 } catch (Exception $e) {
-    mysqli_rollback($koneksi);
+    $koneksi->rollback();
     $_SESSION['error_message'] = $e->getMessage();
 }
 

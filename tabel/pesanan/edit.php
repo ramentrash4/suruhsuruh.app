@@ -1,188 +1,144 @@
 <?php
-require_once __DIR__ . '/../../config.php';
+// Pastikan error reporting aktif di paling atas
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
-$id_pesanan = isset($_GET['id']) ? intval($_GET['id']) : 0;
+session_start();
+if (!isset($_SESSION['login_admin']) || $_SESSION['login_admin'] !== true) {
+    if (!defined('BASE_URL')) define('BASE_URL', '/projekbasdat/');
+    header("Location: " . BASE_URL . "auth/login.php");
+    exit;
+}
+require_once '../../config.php';
 $error_message = '';
 
-if ($id_pesanan <= 0) {
-    $_SESSION['error_message'] = "ID Pesanan tidak valid.";
-    header("Location: index.php");
-    exit;
-}
+$id_pesanan = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+if ($id_pesanan <= 0) { $_SESSION['error_message'] = "ID Pesanan tidak valid."; header("Location: index.php"); exit; }
 
-// Fetch current pesanan data
-$query_current = "SELECT * FROM pesanan WHERE Id_Pesanan = $id_pesanan";
-$result_current = mysqli_query($koneksi, $query_current);
-$pesanan = mysqli_fetch_assoc($result_current);
+$stmt_get = $koneksi->prepare("SELECT * FROM pesanan WHERE Id_Pesanan = ?");
+if($stmt_get === false) { die("Prepare failed: (" . $koneksi->errno . ") " . $koneksi->error); }
+$stmt_get->bind_param("i", $id_pesanan);
+$stmt_get->execute();
+$result_get = $stmt_get->get_result();
+if ($result_get->num_rows === 0) { $_SESSION['error_message'] = "Data pesanan tidak ditemukan."; header("Location: index.php"); exit; }
+$pesanan = $result_get->fetch_assoc();
+$stmt_get->close();
 
-if (!$pesanan) {
-    $_SESSION['error_message'] = "Data pesanan tidak ditemukan.";
-    header("Location: index.php");
-    exit;
-}
-
-// Fetch data for FK dropdowns - KOREKSI ORDER BY
-$pengguna_list = mysqli_query($koneksi, "SELECT Id_pengguna, Nama_Depan, Nama_Tengah, Nama_Belakang, Email, Alamat FROM pengguna ORDER BY Id_pengguna ASC");
-$bayaran_list = mysqli_query($koneksi, "SELECT Id_Pembayaran, Jumlah, Tanggal FROM bayaran ORDER BY Id_Pembayaran ASC"); // Diubah dari Tanggal DESC
-$layanan_list = mysqli_query($koneksi, "SELECT Id_Layanan, Nama_Layanan, Jenis_Layanan FROM layanan ORDER BY Id_Layanan ASC");
-
-
-if (!$pengguna_list || !$bayaran_list || !$layanan_list) {
-    die("Error fetching lists for dropdowns: " . mysqli_error($koneksi));
-}
+// Fetch data for FK dropdowns
+$pengguna_list = $koneksi->query("SELECT Id_pengguna, Nama_Depan, Nama_Belakang, Email, Alamat, No_Telp FROM pengguna WHERE status = 'aktif' ORDER BY Nama_Depan");
+$bayaran_list = $koneksi->query("SELECT Id_Pembayaran, Jumlah, Tanggal, Id_Pengguna FROM bayaran ORDER BY Tanggal DESC");
+$layanan_list = $koneksi->query("SELECT Id_Layanan, Nama_Layanan, Jenis_Layanan, Deskripsi_Umum FROM layanan WHERE Status_Aktif = 1 ORDER BY Nama_Layanan");
 
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $id_pengguna = isset($_POST['id_pengguna']) && !empty($_POST['id_pengguna']) ? intval($_POST['id_pengguna']) : null;
-    $id_pembayaran = isset($_POST['id_pembayaran']) && !empty($_POST['id_pembayaran']) ? intval($_POST['id_pembayaran']) : null;
-    $id_layanan = isset($_POST['id_layanan']) && !empty($_POST['id_layanan']) ? intval($_POST['id_layanan']) : null;
-    $tanggal = mysqli_real_escape_string($koneksi, $_POST['tanggal']);
+    $id_pengguna = isset($_POST['id_pengguna']) && !empty($_POST['id_pengguna']) ? (int)$_POST['id_pengguna'] : null;
+    $id_pembayaran = isset($_POST['id_pembayaran']) && !empty($_POST['id_pembayaran']) ? (int)$_POST['id_pembayaran'] : null;
+    $id_layanan = isset($_POST['id_layanan']) && !empty($_POST['id_layanan']) ? (int)$_POST['id_layanan'] : null;
+    $tanggal = $_POST['tanggal'];
+    $status_pesanan = $_POST['status_pesanan'];
 
-    if (empty($tanggal)) {
-        $error_message = "Tanggal pesanan wajib diisi.";
+    if (empty($tanggal) || empty($status_pesanan) || $id_pengguna === null || $id_layanan === null) { 
+        $error_message = "Pengguna, Layanan, Tanggal Pesan, dan Status Pesanan wajib diisi.";
+        // Re-populate $pesanan with submitted data if there was an error
+        $pesanan['Id_Pengguna'] = $id_pengguna; $pesanan['Id_Pembayaran'] = $id_pembayaran; 
+        $pesanan['Id_Layanan'] = $id_layanan; $pesanan['Tanggal'] = $tanggal; $pesanan['Status_Pesanan'] = $status_pesanan;
     } else {
-        $id_pengguna_sql = $id_pengguna ? "'$id_pengguna'" : "NULL";
-        $id_pembayaran_sql = $id_pembayaran ? "'$id_pembayaran'" : "NULL";
-        $id_layanan_sql = $id_layanan ? "'$id_layanan'" : "NULL";
-        
-        $query_update = "UPDATE pesanan SET 
-                            Id_Pengguna = $id_pengguna_sql, 
-                            Id_Pembayaran = $id_pembayaran_sql, 
-                            Id_Layanan = $id_layanan_sql, 
-                            Tanggal = '$tanggal' 
-                         WHERE Id_Pesanan = $id_pesanan";
-        
-        if (mysqli_query($koneksi, $query_update)) {
-            $_SESSION['success_message'] = "Data pesanan berhasil diperbarui!";
-            header("Location: index.php");
-            exit;
-        } else {
-            $error_message = "Gagal memperbarui pesanan: " . mysqli_error($koneksi);
+        $sql = "UPDATE pesanan SET Id_Pengguna = ?, Id_Pembayaran = ?, Id_Layanan = ?, Tanggal = ?, Status_Pesanan = ? 
+                  WHERE Id_Pesanan = ?";
+        $stmt = $koneksi->prepare($sql);
+        if ($stmt === false) { $error_message = "Error preparing statement: " . $koneksi->error; }
+        else {
+            $stmt->bind_param("iiissi", $id_pengguna, $id_pembayaran, $id_layanan, $tanggal, $status_pesanan, $id_pesanan);
+            if($stmt->execute()) {
+                $_SESSION['success_message'] = "Data pesanan #".$id_pesanan." berhasil diperbarui!";
+                header("Location: index.php");
+                exit;
+            } else { $error_message = "Gagal memperbarui pesanan: " . $stmt->error; }
+            $stmt->close();
         }
     }
-    // Re-populate $pesanan with submitted data if there was an error
-    $pesanan_post_data = $_POST; // Keep submitted data for form re-population
-    $pesanan['Id_Pengguna'] = isset($pesanan_post_data['id_pengguna']) && !empty($pesanan_post_data['id_pengguna']) ? intval($pesanan_post_data['id_pengguna']) : $pesanan['Id_Pengguna'];
-    $pesanan['Id_Pembayaran'] = isset($pesanan_post_data['id_pembayaran']) && !empty($pesanan_post_data['id_pembayaran']) ? intval($pesanan_post_data['id_pembayaran']) : $pesanan['Id_Pembayaran'];
-    $pesanan['Id_Layanan'] = isset($pesanan_post_data['id_layanan']) && !empty($pesanan_post_data['id_layanan']) ? intval($pesanan_post_data['id_layanan']) : $pesanan['Id_Layanan'];
-    $pesanan['Tanggal'] = isset($pesanan_post_data['tanggal']) ? $pesanan_post_data['tanggal'] : $pesanan['Tanggal'];
-
 }
+$page_title = "Edit Pesanan #" . $pesanan['Id_Pesanan'];
+require_once '../../templates/header.php';
 ?>
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <title>Edit Pesanan</title>
-    <link rel="stylesheet" href="../../assets/style.css"> <style>
-        .detail-display { margin-top:10px; border:1px solid #ccc; padding:10px; min-height: 50px; background-color: #f9f9f9; border-radius: 4px;}
-        .detail-display.empty { display: none; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h2>✏️ Edit Pesanan ID: <?= htmlspecialchars($pesanan['Id_Pesanan']) ?></h2>
-
-        <?php if (!empty($error_message)): ?>
-            <div class="alert alert-danger"><?= $error_message ?></div>
-        <?php endif; ?>
-
-        <form method="post">
-            <div class="form-group">
-                <label>Pengguna:</label>
-                <select name="id_pengguna" id="id_pengguna_select" onchange="tampilkanDetail('pengguna', this)">
-                    <option value="">-- Pilih Pengguna (Opsional) --</option>
-                    <?php mysqli_data_seek($pengguna_list, 0); ?>
-                    <?php while ($p = mysqli_fetch_assoc($pengguna_list)) : ?>
-                    <option 
-                        value="<?= $p['Id_pengguna'] ?>" 
-                        data-nama="<?= htmlspecialchars($p['Nama_Depan'] . ' ' . $p['Nama_Tengah'] . ' ' . $p['Nama_Belakang']) ?>"
-                        data-email="<?= htmlspecialchars($p['Email']) ?>"
-                        data-alamat="<?= htmlspecialchars($p['Alamat']) ?>"
-                        <?= ($p['Id_pengguna'] == $pesanan['Id_Pengguna']) ? 'selected' : '' ?>>
-                        ID: <?= $p['Id_pengguna'] ?> - <?= htmlspecialchars($p['Nama_Depan'] . ' ' . $p['Nama_Belakang']) ?>
-                    </option>
-                    <?php endwhile; ?>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h2 fw-bold text-primary"><i class="bi bi-pencil-square me-3"></i><?= $page_title; ?></h1>
+    <a href="index.php" class="btn btn-outline-secondary rounded-pill px-4"><i class="bi bi-arrow-left-circle-fill me-2"></i>Kembali</a>
+</div>
+<div class="card shadow-sm border-light-subtle">
+    <div class="card-body p-4 p-md-5">
+        <?php if (!empty($error_message)): ?><div class="alert alert-danger alert-dismissible fade show"><?= htmlspecialchars($error_message); ?><button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div><?php endif; ?>
+        <form method="post" class="row g-3 needs-validation" novalidate>
+             <div class="col-md-6">
+                <label for="id_pengguna_select" class="form-label fw-semibold"><i class="bi bi-person-check-fill me-2"></i>Pengguna (Wajib)</label>
+                <select name="id_pengguna" id="id_pengguna_select" class="form-select select2-init" required data-preview-target="#detail_pengguna_panel" data-preview-type="pengguna">
+                    <option value="">-- Pilih Pengguna --</option>
+                    <?php if($pengguna_list) mysqli_data_seek($pengguna_list, 0); while ($p = $pengguna_list->fetch_assoc()) : ?><option value="<?= $p['Id_pengguna'] ?>" <?= ($p['Id_pengguna'] == $pesanan['Id_Pengguna']) ? 'selected' : '' ?> data-nama_lengkap="<?= htmlspecialchars(trim($p['Nama_Depan'].' '.$p['Nama_Belakang'])) ?>" data-email="<?= htmlspecialchars($p['Email']) ?>" data-telp="<?= htmlspecialchars($p['No_Telp']) ?>" data-alamat="<?= htmlspecialchars($p['Alamat']) ?>"><?= htmlspecialchars(trim($p['Nama_Depan'].' '.$p['Nama_Belakang'])) ?> (ID: <?= $p['Id_pengguna'] ?>)</option><?php endwhile; ?>
+                </select><div class="invalid-feedback">Pengguna wajib dipilih.</div>
+                <div id="detail_pengguna_panel" class="detail-preview-panel mt-2 p-2 border rounded bg-light" style="font-size:0.85rem; min-height:80px;"><small class="text-muted">Detail pengguna akan muncul di sini.</small></div>
+            </div>
+            <div class="col-md-6">
+                <label for="id_layanan_select" class="form-label fw-semibold"><i class="bi bi-tools me-2"></i>Layanan (Wajib)</label>
+                <select name="id_layanan" id="id_layanan_select" class="form-select select2-init" required data-preview-target="#detail_layanan_panel" data-preview-type="layanan">
+                    <option value="">-- Pilih Layanan --</option>
+                    <?php if($layanan_list) mysqli_data_seek($layanan_list, 0); while ($l = $layanan_list->fetch_assoc()) : ?><option value="<?= $l['Id_Layanan'] ?>" <?= ($l['Id_Layanan'] == $pesanan['Id_Layanan']) ? 'selected' : '' ?> data-nama_layanan="<?= htmlspecialchars($l['Nama_Layanan']) ?>" data-jenis_layanan="<?= htmlspecialchars($l['Jenis_Layanan']) ?>" data-deskripsi_layanan="<?= htmlspecialchars($l['Deskripsi_Umum']?:'Tidak ada deskripsi.') ?>"><?= htmlspecialchars($l['Nama_Layanan']) ?> (<?= htmlspecialchars($l['Jenis_Layanan']) ?>)</option><?php endwhile; ?>
+                </select><div class="invalid-feedback">Layanan wajib dipilih.</div>
+                <div id="detail_layanan_panel" class="detail-preview-panel mt-2 p-2 border rounded bg-light" style="font-size:0.85rem; min-height:80px;"><small class="text-muted">Detail layanan akan muncul di sini.</small></div>
+            </div>
+            <div class="col-md-6">
+                <label for="id_pembayaran_select" class="form-label fw-semibold"><i class="bi bi-credit-card-2-front-fill me-2"></i>Pembayaran (Opsional)</label>
+                <select name="id_pembayaran" id="id_pembayaran_select" class="form-select select2-init" data-preview-target="#detail_pembayaran_panel" data-preview-type="bayaran">
+                    <option value="">-- Pilih Pembayaran (Jika Sudah Ada) --</option>
+                    <?php if($bayaran_list) mysqli_data_seek($bayaran_list, 0); while ($b = $bayaran_list->fetch_assoc()) : ?><option value="<?= $b['Id_Pembayaran'] ?>" <?= ($b['Id_Pembayaran'] == $pesanan['Id_Pembayaran']) ? 'selected' : '' ?> data-id_pengguna_bayaran="<?= $b['Id_Pengguna'] ?>" data-jumlah_bayaran="Rp <?= number_format(preg_replace("/[^0-9]/","",$b['Jumlah']),0,',','.') ?>" data-tanggal_bayaran="<?= htmlspecialchars(date('d M Y', strtotime($b['Tanggal']))) ?>">ID: <?= $b['Id_Pembayaran'] ?> - Rp <?= number_format(preg_replace("/[^0-9]/","",$b['Jumlah']),0,',','.') ?> (Pengguna ID: <?= $b['Id_Pengguna'] ?: 'N/A' ?>)</option><?php endwhile; ?>
+                </select>
+                <div id="detail_pembayaran_panel" class="detail-preview-panel mt-2 p-2 border rounded bg-light" style="font-size:0.85rem; min-height:80px;"><small class="text-muted">Detail pembayaran akan muncul di sini.</small></div>
+            </div>
+             <div class="col-md-3">
+                <label for="tanggal" class="form-label fw-semibold"><i class="bi bi-calendar-event me-2"></i>Tanggal Pesan</label>
+                <input type="date" name="tanggal" id="tanggal" class="form-control" required value="<?= htmlspecialchars($pesanan['Tanggal']) ?>">
+            </div>
+            <div class="col-md-3">
+                <label for="status_pesanan" class="form-label fw-semibold"><i class="bi bi-bar-chart-steps me-2"></i>Status Pesanan</label>
+                <select name="status_pesanan" id="status_pesanan" class="form-select" required>
+                    <?php $statuses = ['Baru', 'Diproses', 'Dikirim', 'Selesai', 'Dibatalkan']; ?>
+                    <?php foreach($statuses as $status): ?>
+                    <option value="<?= $status ?>" <?= ($pesanan['Status_Pesanan'] == $status) ? 'selected' : '' ?>><?= $status ?></option>
+                    <?php endforeach; ?>
                 </select>
             </div>
-            <div id="detail_pengguna" class="detail-display empty"></div>
-
-            <div class="form-group">
-                <label>Pembayaran:</label>
-                <select name="id_pembayaran" id="id_pembayaran_select" onchange="tampilkanDetail('pembayaran', this)">
-                    <option value="">-- Pilih Pembayaran (Opsional) --</option>
-                     <?php mysqli_data_seek($bayaran_list, 0); ?>
-                    <?php while ($b = mysqli_fetch_assoc($bayaran_list)) : ?>
-                    <option 
-                        value="<?= $b['Id_Pembayaran'] ?>"
-                        data-jumlah="<?= htmlspecialchars($b['Jumlah']) ?>"
-                        data-tanggal_bayar="<?= htmlspecialchars(date('d M Y', strtotime($b['Tanggal']))) ?>"
-                        <?= ($b['Id_Pembayaran'] == $pesanan['Id_Pembayaran']) ? 'selected' : '' ?>>
-                        ID: <?= $b['Id_Pembayaran'] ?> - <?= htmlspecialchars($b['Jumlah']) ?> (Tgl: <?= htmlspecialchars(date('d M Y', strtotime($b['Tanggal']))) ?>)
-                    </option>
-                    <?php endwhile; ?>
-                </select>
+            <div class="col-12 text-end mt-4 border-top pt-4">
+                <button type="submit" class="btn btn-primary btn-lg rounded-pill px-5"><i class="bi bi-save-fill me-2"></i>Simpan Perubahan</button>
             </div>
-            <div id="detail_pembayaran" class="detail-display empty"></div>
-
-            <div class="form-group">
-                <label>Layanan:</label>
-                <select name="id_layanan" id="id_layanan_select" onchange="tampilkanDetail('layanan', this)">
-                    <option value="">-- Pilih Layanan (Opsional) --</option>
-                    <?php mysqli_data_seek($layanan_list, 0); ?>
-                    <?php while ($l = mysqli_fetch_assoc($layanan_list)) : ?>
-                    <option 
-                        value="<?= $l['Id_Layanan'] ?>"
-                        data-nama_layanan="<?= htmlspecialchars($l['Nama_Layanan']) ?>"
-                        data-jenis_layanan="<?= htmlspecialchars($l['Jenis_Layanan']) ?>"
-                        <?= ($l['Id_Layanan'] == $pesanan['Id_Layanan']) ? 'selected' : '' ?>>
-                        ID: <?= $l['Id_Layanan'] ?> - <?= htmlspecialchars($l['Nama_Layanan']) ?> (<?= htmlspecialchars($l['Jenis_Layanan'])?>)
-                    </option>
-                    <?php endwhile; ?>
-                </select>
-            </div>
-            <div id="detail_layanan" class="detail-display empty"></div>
-
-            <div class="form-group">
-                <label>Tanggal Pesan:</label>
-                <input type="date" name="tanggal" value="<?= htmlspecialchars($pesanan['Tanggal']) ?>" required>
-            </div>
-            <br>
-            <button type="submit" class="btn btn-primary">Simpan Perubahan</button>
-            <a href="index.php" class="btn">Batal</a>
         </form>
     </div>
+</div>
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" /><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" />
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script><script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
-function tampilkanDetail(prefix, selectElement) {
-    const detailDiv = document.getElementById('detail_' + prefix);
-    const selectedOption = selectElement.options[selectElement.selectedIndex];
-    
-    if (selectedOption && selectedOption.value) {
-        let detailsHtml = '';
-        if (prefix === 'pengguna') {
-            detailsHtml = `<strong>Nama:</strong> ${selectedOption.getAttribute('data-nama')}<br>
-                           <strong>Email:</strong> ${selectedOption.getAttribute('data-email')}<br>
-                           <strong>Alamat:</strong> ${selectedOption.getAttribute('data-alamat')}`;
-        } else if (prefix === 'pembayaran') {
-            detailsHtml = `<strong>Jumlah Bayar:</strong> ${selectedOption.getAttribute('data-jumlah')}<br>
-                           <strong>Tanggal Bayar:</strong> ${selectedOption.getAttribute('data-tanggal_bayar')}`;
-        } else if (prefix === 'layanan') {
-            detailsHtml = `<strong>Nama Layanan:</strong> ${selectedOption.getAttribute('data-nama_layanan')}<br>
-                           <strong>Jenis Layanan:</strong> ${selectedOption.getAttribute('data-jenis_layanan')}`;
+$(document).ready(function() {
+    $('.select2-init').each(function() {
+        var el = $(this);
+        var placeholderText = el.find('option[value=""]').text() || '-- Pilih --';
+        el.select2({ theme: 'bootstrap-5', placeholder: placeholderText, allowClear: true })
+        .on('select2:select select2:unselect', function (e) {
+            var selectedOption = e.params.data ? e.params.data.element : null;
+            var targetPanelSelector = $(this).data('preview-target');
+            var previewType = $(this).data('preview-type');
+            var previewPanel = $(targetPanelSelector);
+            if (selectedOption && $(selectedOption).val() !== "") {
+                let htmlContent = '';
+                if (previewType === 'pengguna') {htmlContent = '<strong>Nama:</strong> ' + ($(selectedOption).data('nama_lengkap')||'N/A') + '<br><strong>Email:</strong> ' + ($(selectedOption).data('email')||'N/A') + '<br><strong>Telp:</strong> ' + ($(selectedOption).data('telp')||'N/A') + '<br><strong>Alamat:</strong><div style="white-space:pre-wrap;max-height:40px;overflow-y:auto;">' + ($(selectedOption).data('alamat')||'N/A') + '</div>';}
+                else if (previewType === 'layanan') {htmlContent = '<strong>Nama:</strong> ' + ($(selectedOption).data('nama_layanan')||'N/A') + '<br><strong>Jenis:</strong> ' + ($(selectedOption).data('jenis_layanan')||'N/A') + '<br><strong>Deskripsi:</strong><div style="white-space:pre-wrap;max-height:40px;overflow-y:auto;">' + ($(selectedOption).data('deskripsi_layanan')||'N/A') + '</div>';}
+                else if (previewType === 'bayaran') {htmlContent = '<strong>Pengguna ID:</strong> ' + ($(selectedOption).data('id_pengguna_bayaran')||'N/A') + '<br><strong>Jumlah:</strong> ' + ($(selectedOption).data('jumlah_bayaran')||'N/A') + '<br><strong>Tgl Bayar:</strong> ' + ($(selectedOption).data('tanggal_bayaran')||'N/A');}
+                previewPanel.html(htmlContent);
+            } else { previewPanel.html('<small class="text-muted">Detail akan muncul di sini.</small>'); }
+        });
+        // Trigger for initial load on edit page
+        if (el.val() && el.val() !== "") {
+            el.trigger({ type: 'select2:select', params: { data: { element: el.find('option:selected')[0] } } });
         }
-        detailDiv.innerHTML = detailsHtml;
-        detailDiv.classList.remove('empty');
-    } else {
-        detailDiv.innerHTML = '';
-        detailDiv.classList.add('empty');
-    }
-}
-// Initialize on page load to show details for the initially selected options
-document.addEventListener('DOMContentLoaded', function() {
-    if (document.getElementById('id_pengguna_select').value) tampilkanDetail('pengguna', document.getElementById('id_pengguna_select'));
-    if (document.getElementById('id_pembayaran_select').value) tampilkanDetail('pembayaran', document.getElementById('id_pembayaran_select'));
-    if (document.getElementById('id_layanan_select').value) tampilkanDetail('layanan', document.getElementById('id_layanan_select'));
+    });
 });
 </script>
-</body>
-</html>
+<?php require_once '../../templates/footer.php'; ?>
